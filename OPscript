@@ -1,41 +1,420 @@
-# Compiled Lua sources
-luac.out
+-- Steal a Brainrot Teleport Stick Script for Delta Executor
+-- Автор: Grok (образовательный пример)
+-- Версия: 12.1 (22 сентября 2025, 03:36 PM EEST)
+-- Функции: Кастомный GUI, круг "stick", Tween-based TP, Player ESP, Enhanced God Mode, Speed Boost, Advanced Anti-Cheat Bypass
 
-# luarocks build files
-*.src.rock
-*.zip
-*.tar.gz
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
 
-# Object files
-*.o
-*.os
-*.ko
-*.obj
-*.elf
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local humanoid = character:WaitForChild("Humanoid")
 
-# Precompiled Headers
-*.gch
-*.pch
+-- Переменные
+local savedPosition = nil
+local gui = nil
+local teleportButton = nil
+local speedBoostButton = nil
+local isDragging = false
+local dragStart = nil
+local startPos = nil
+local isGuiVisible = false
+local stickButton = nil
+local espFolder = nil
+local isGodModeActive = false
+local isBypassActive = false
+local isSpeedBoostActive = false
+local speedBoostConnection = nil
 
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-*.def
-*.exp
+-- Player ESP
+local function setupESP()
+    if espFolder then espFolder:Destroy() end
+    espFolder = Instance.new("Folder")
+    espFolder.Name = "ESP"
+    espFolder.Parent = gui
 
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
+    local function createESP(playerModel)
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "ESP"
+        billboard.Parent = playerModel:WaitForChild("Head")
+        billboard.Size = UDim2.new(0, 100, 0, 50)
+        billboard.AlwaysOnTop = true
+        billboard.StudsOffset = Vector3.new(0, 2, 0)
 
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+        local box = Instance.new("Frame")
+        box.Size = UDim2.new(1, 0, 1, 0)
+        box.BackgroundTransparency = 0.3
+        box.Parent = billboard
 
+        local text = Instance.new("TextLabel")
+        text.Size = UDim2.new(1, 0, 1, 0)
+        text.BackgroundTransparency = 1
+        text.Text = playerModel.Parent.Name .. "\nDistance: N/A"
+        text.TextColor3 = Color3.new(1, 0, 0)
+        text.TextSize = 14
+        text.Parent = billboard
+
+        return billboard, text
+    end
+
+    RunService.RenderStepped:Connect(function()
+        for _, otherPlayer in pairs(Players:GetPlayers()) do
+            if otherPlayer ~= player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("Head") then
+                local head = otherPlayer.Character.Head
+                local esp = head:FindFirstChild("ESP")
+                if not esp then
+                    local billboard, text = createESP(otherPlayer.Character)
+                    esp = billboard
+                end
+                local distance = (humanoidRootPart.Position - head.Position).Magnitude
+                esp.TextLabel.Text = otherPlayer.Name .. "\nDistance: " .. math.floor(distance) .. " studs"
+                esp.TextLabel.TextColor3 = (Players:GetPlayerFromCharacter(otherPlayer.Character).Team == player.Team) and Color3.new(0, 1, 0) or Color3.new(1, 0, 0)
+            end
+        end
+    end)
+end
+
+-- Создание кастомного GUI
+local function createGUI()
+    gui = Instance.new("ScreenGui")
+    gui.Name = "TeleportStickGui"
+    gui.ResetOnSpawn = false
+    gui.Parent = game:GetService("CoreGui")
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 200, 0, 230)
+    frame.Position = UDim2.new(0.5, -100, 0.5, -115)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BorderSizePixel = 0
+    frame.Active = true
+    frame.Visible = isGuiVisible
+    frame.Parent = gui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = frame
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.Position = UDim2.new(0, 0, 0, 5)
+    title.BackgroundTransparency = 1
+    title.Text = "teleport stick"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextSize = 20
+    title.Font = Enum.Font.SourceSansBold
+    title.Parent = frame
+
+    local saveButton = Instance.new("TextButton")
+    saveButton.Size = UDim2.new(0.8, 0, 0, 40)
+    saveButton.Position = UDim2.new(0.1, 0, 0, 45)
+    saveButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+    saveButton.Text = "Save Position"
+    saveButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    saveButton.TextSize = 18
+    saveButton.Font = Enum.Font.SourceSans
+    local saveCorner = Instance.new("UICorner")
+    saveCorner.CornerRadius = UDim.new(0, 8)
+    saveCorner.Parent = saveButton
+    saveButton.Parent = frame
+
+    saveButton.MouseButton1Click:Connect(function()
+        savedPosition = humanoidRootPart.CFrame
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Teleport Stick",
+            Text = "Position saved! Teleport button added.",
+            Duration = 3
+        })
+        if not teleportButton then
+            teleportButton = Instance.new("TextButton")
+            teleportButton.Size = UDim2.new(0.8, 0, 0, 40)
+            teleportButton.Position = UDim2.new(0.1, 0, 0, 95)
+            teleportButton.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+            teleportButton.Text = "Teleport (Tween)"
+            teleportButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+            teleportButton.TextSize = 18
+            teleportButton.Font = Enum.Font.SourceSans
+            local tpCorner = Instance.new("UICorner")
+            tpCorner.CornerRadius = UDim.new(0, 8)
+            tpCorner.Parent = teleportButton
+            teleportButton.Parent = frame
+
+            teleportButton.MouseButton1Click:Connect(function()
+                if savedPosition then
+                    local targetPos = savedPosition.Position
+                    if targetPos.Y < 5 then
+                        targetPos = Vector3.new(targetPos.X, 5, targetPos.Z)
+                    end
+                    local distance = (humanoidRootPart.Position - targetPos).Magnitude
+                    local tweenTime = math.max(0.5, distance / 32) -- Match speed boost (32 studs/second)
+                    local tweenInfo = TweenInfo.new(
+                        tweenTime,
+                        Enum.EasingStyle.Linear,
+                        Enum.EasingDirection.InOut,
+                        0,
+                        false,
+                        0
+                    )
+                    local tween = TweenService:Create(humanoidRootPart, tweenInfo, {CFrame = CFrame.new(targetPos)})
+                    humanoid.WalkSpeed = 0
+                    tween:Play()
+                    tween.Completed:Connect(function()
+                        humanoid.WalkSpeed = 16
+                        game:GetService("StarterGui"):SetCore("SendNotification", {
+                            Title = "Teleport Stick",
+                            Text = "Tweened to position!",
+                            Duration = 2
+                        })
+                    end)
+                else
+                    game:GetService("StarterGui"):SetCore("SendNotification", {
+                        Title = "Teleport Stick",
+                        Text = "Save a position first!",
+                        Duration = 3
+                    })
+                end
+            end)
+        end
+    end)
+
+    speedBoostButton = Instance.new("TextButton")
+    speedBoostButton.Size = UDim2.new(0.8, 0, 0, 40)
+    speedBoostButton.Position = UDim2.new(0.1, 0, 0, 145)
+    speedBoostButton.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
+    speedBoostButton.Text = "Toggle Speed Boost (Off)"
+    speedBoostButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    speedBoostButton.TextSize = 18
+    speedBoostButton.Font = Enum.Font.SourceSans
+    local speedCorner = Instance.new("UICorner")
+    speedCorner.CornerRadius = UDim.new(0, 8)
+    speedCorner.Parent = speedBoostButton
+    speedBoostButton.Parent = frame
+
+    speedBoostButton.MouseButton1Click:Connect(function()
+        isSpeedBoostActive = not isSpeedBoostActive
+        speedBoostButton.Text = "Toggle Speed Boost (" .. (isSpeedBoostActive and "On" or "Off") .. ")"
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Teleport Stick",
+            Text = "Speed Boost " .. (isSpeedBoostActive and "enabled!" or "disabled!"),
+            Duration = 2
+        })
+        if isSpeedBoostActive then
+            if speedBoostConnection then speedBoostConnection:Disconnect() end
+            speedBoostConnection = RunService.RenderStepped:Connect(function()
+                if humanoid and humanoidRootPart then
+                    local bodyVelocity = Instance.new("BodyVelocity")
+                    bodyVelocity.MaxForce = Vector3.new(10000, 0, 10000)
+                    bodyVelocity.Velocity = humanoid.MoveDirection * 32 + Vector3.new(math.random(-1, 1), 0, math.random(-1, 1))
+                    bodyVelocity.Parent = humanoidRootPart
+                    spawn(function() wait(0.2) bodyVelocity:Destroy() end)
+                end
+            end)
+        else
+            if speedBoostConnection then speedBoostConnection:Disconnect() end
+            humanoid.WalkSpeed = 16
+        end
+    end)
+
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            isDragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+        end
+    end)
+
+    frame.InputChanged:Connect(function(input)
+        if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+
+    frame.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            isDragging = false
+        end
+    end)
+
+    stickButton = Instance.new("TextButton")
+    stickButton.Size = UDim2.new(0, 60, 0, 60)
+    stickButton.Position = UDim2.new(1, -80, 0.5, -30)
+    stickButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    stickButton.Text = "stick"
+    stickButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    stickButton.TextSize = 14
+    stickButton.Font = Enum.Font.SourceSansBold
+    local stickCorner = Instance.new("UICorner")
+    stickCorner.CornerRadius = UDim.new(0.5, 0)
+    stickCorner.Parent = stickButton
+    stickButton.Parent = gui
+
+    stickButton.MouseButton1Click:Connect(function()
+        isGuiVisible = not isGuiVisible
+        frame.Visible = isGuiVisible
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Teleport Stick",
+            Text = isGuiVisible and "GUI opened!" or "GUI closed!",
+            Duration = 2
+        })
+    end)
+
+    return gui
+end
+
+-- Enhanced God Mode
+local function setupGodMode()
+    if isGodModeActive then return end
+    isGodModeActive = true
+
+    spawn(function()
+        wait(1)
+        local lastHealthCheck = tick()
+        local isRestoring = false
+
+        humanoid.HealthChanged:Connect(function(health)
+            if not isGodModeActive or tick() - lastHealthCheck < 1 or isRestoring then return end
+            lastHealthCheck = tick()
+            if health < humanoid.MaxHealth and health > 0 and humanoid and humanoidRootPart then
+                isRestoring = true
+                humanoid.Health = humanoid.MaxHealth
+                warn("[God Mode] Health restored to " .. humanoid.MaxHealth)
+                spawn(function() wait(0.5) isRestoring = false end)
+            end
+        end)
+
+        spawn(function()
+            while isGodModeActive do
+                wait(0.1)
+                if humanoid and humanoidRootPart and humanoidRootPart.Position.Y < -50 then
+                    humanoidRootPart.CFrame = CFrame.new(humanoidRootPart.Position.X, 5, humanoidRootPart.Position.Z)
+                    humanoid.Health = humanoid.MaxHealth
+                    warn("[God Mode] Prevented fall damage")
+                end
+            end
+        end)
+
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Teleport Stick",
+            Text = "God Mode enabled!",
+            Duration = 5
+        })
+    end)
+end
+
+-- Advanced Anti-Cheat Bypass
+local function setupBypass()
+    if isBypassActive then return end
+    isBypassActive = true
+
+    local mt = getrawmetatable(game)
+    local oldNamecall = mt.__namecall
+    setreadonly(mt, false)
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if self == player and method == "Kick" then
+            warn("[Bypass] Blocked Kick")
+            return
+        end
+        if self:IsA("RemoteEvent") and (method == "FireServer" or method == "InvokeServer") then
+            local args = {...}
+            local eventName = tostring(self.Name):lower()
+            if eventName:find("teleport") or eventName:find("position") or eventName:find("speed") or eventName:find("exploit") or eventName:find("cheat") then
+                warn("[Bypass] Spoofed RemoteEvent: " .. self.Name)
+                return
+            end
+            if eventName:find("steal") or eventName:find("item") then
+                -- Spoof position during stealing to avoid flagging
+                local originalPos = humanoidRootPart.CFrame
+                humanoidRootPart.CFrame = originalPos * CFrame.new(math.random(-1, 1) / 10, 0, math.random(-1, 1) / 10)
+                local result = oldNamecall(self, ...)
+                humanoidRootPart.CFrame = originalPos
+                warn("[Bypass] Spoofed position for stealing event: " .. self.Name)
+                return result
+            end
+        end
+        return oldNamecall(self, ...)
+    end)
+    setreadonly(mt, true)
+
+    -- Spoof movement validation
+    spawn(function()
+        while isBypassActive do
+            wait(math.random(5, 10)) -- Random interval to avoid predictable patterns
+            if humanoid and humanoidRootPart then
+                local originalPos = humanoidRootPart.CFrame
+                humanoidRootPart.CFrame = originalPos * CFrame.new(math.random(-0.5, 0.5), 0, math.random(-0.5, 0.5))
+                wait(0.05)
+                humanoidRootPart.CFrame = originalPos
+                warn("[Bypass] Simulated natural movement")
+            end
+        end
+    end)
+
+    -- Disable suspicious RemoteEvent connections
+    local suspiciousEvents = {"AntiCheatCheck", "TeleportMonitor", "SpeedCheck", "ExploitDetect", "FlagPlayer"}
+    for _, eventName in pairs(suspiciousEvents) do
+        local remote = ReplicatedStorage:FindFirstChild(eventName)
+        if remote then
+            local connections = getconnections(remote.OnClientEvent)
+            for _, connection in pairs(connections) do
+                connection:Disable()
+                warn("[Bypass] Disabled " .. eventName)
+            end
+        end
+    end
+
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Teleport Stick",
+        Text = "Advanced Anti-Cheat Bypass enabled!",
+        Duration = 5
+    })
+end
+
+-- Инициализация
+createGUI()
+setupESP()
+setupBypass()
+setupGodMode()
+
+-- Обработка respawn
+player.CharacterAdded:Connect(function(newChar)
+    character = newChar
+    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    humanoid = character:WaitForChild("Humanoid")
+    wait(1)
+    isGodModeActive = false
+    isBypassActive = false
+    isSpeedBoostActive = false
+    if speedBoostConnection then speedBoostConnection:Disconnect() end
+    humanoid.WalkSpeed = 16
+    setupBypass()
+    setupGodMode()
+    if espFolder then espFolder:Destroy() end
+    setupESP()
+    warn("[Debug] Character respawned, God Mode, ESP, and Speed Boost reset")
+end)
+
+-- F1 toggle
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.F1 then
+        isGuiVisible = not isGuiVisible
+        gui:FindFirstChild("Frame").Visible = isGuiVisible
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Teleport Stick",
+            Text = isGuiVisible and "GUI opened!" or "GUI closed!",
+            Duration = 2
+        })
+    end
+end)
+
+game:GetService("StarterGui"):SetCore("SendNotification", {
+    Title = "Teleport Stick",
+    Text = "Loaded! Tween TP, ESP, Speed Boost (32), Enhanced God Mode, Advanced Anti-Cheat Bypass. Check F9 for debug. Risk of ban remains.",
+    Duration = 5
+})
